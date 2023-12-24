@@ -41,49 +41,55 @@ type LessThan[T any] func(T, T) bool
 // Tree is an immutable AVL Tree.  New Tree instances are created whenever any of the Insert or Delete functions
 // are called against a Tree.  New Tree instances will share unaltered nodes with the Tree they were created from.
 type Tree[T any] struct {
-	nsp   *sync.Pool
-	root  *node[T]
-	less  LessThan[T]
-	gen   uint64
-	count int
+	nsp   *sync.Pool  // Pool of node stacks used to manage tree mutations.  This may be shared among several Trees.
+	root  *node[T]    // Root node of the binary tree.
+	less  LessThan[T] // Ordering function used to sort nodes in the Tree.
+	gen   uint64      // Generation count of the tree.  Every insert or delete call increments gen.
+	count int         // Nodes present in the Tree.
 }
 
-func (t *Tree[T]) getNsp() *nodeStack[T] {
+// getNs fetches a nodeStack from the pool of spare nodestacks.  We cache them in a pool
+// to reduce GC pressure in write-heavy operations.
+func (t *Tree[T]) getNs() *nodeStack[T] {
 	res := t.nsp.Get().(*nodeStack[T])
 	res.gen = t.gen
 	return res
 }
 
-func (t *Tree[T]) putNsp(n *nodeStack[T]) {
+// putNS returns a nodeStack to the pool of spare nodeStacks.
+func (t *Tree[T]) putNs(n *nodeStack[T]) {
+	n.s = n.s[:cap(n.s)]
 	for i := range n.s {
 		n.s[i] = nil
 	}
 	n.s = n.s[:0]
 }
 
+// insertOne inserts a single item into the tree.  All Insert* functions use this to do their work.
 func (t *Tree[T]) insertOne(ins *nodeStack[T], item T) {
 	if t.root == nil {
 		t.root = ins.newNode(item)
 		t.count = 1
 		return
 	}
-	direction := t.getExact(ins, t.root, item)
+	direction := t.getExact(ins, item)
 	n := ins.at(-1)
-	needRebalance := false
-	if direction == Equal {
+	// Default to assuming the tree will not need rebalancing.
+	var addDir int
+	switch direction {
+	case Equal:
 		n.i = item
-	} else {
-		t.count++
-		if direction == Less {
-			n.l = ins.newNode(item)
-			needRebalance = n.r == nil
-		} else {
-			n.r = ins.newNode(item)
-			needRebalance = n.l == nil
-		}
+		t.root = ins.at(0)
+		return
+	case Less:
+		addDir = l
+	case Greater:
+		addDir = r
 	}
-	if needRebalance {
-		rebalance(ins)
+	t.count++
+	n.c[addDir] = ins.newNode(item)
+	if n.c[flip(addDir)] == nil {
+		ins.rebalance()
 	}
 	t.root = ins.at(0)
 }
@@ -92,8 +98,8 @@ func (t *Tree[T]) insertOne(ins *nodeStack[T], item T) {
 func New[T any](lt LessThan[T], items ...T) *Tree[T] {
 	res := &Tree[T]{less: lt, nsp: &sync.Pool{New: func() any { return &nodeStack[T]{} }}}
 	if len(items) > 0 {
-		ins := res.getNsp()
-		defer res.putNsp(ins)
+		ins := res.getNs()
+		defer res.putNs(ins)
 		for i := range items {
 			res.insertOne(ins, items[i])
 		}
@@ -111,8 +117,8 @@ type Fill[T any] func(func(T))
 // of copy-on-write operations.
 func CreateWith[T any](lt LessThan[T], fill Fill[T]) *Tree[T] {
 	res := New[T](lt)
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	thunk := func(i T) {
 		res.insertOne(ins, i)
 	}
@@ -124,8 +130,8 @@ func CreateWith[T any](lt LessThan[T], fill Fill[T]) *Tree[T] {
 func (t *Tree[T]) Bud(lt LessThan[T], items ...T) *Tree[T] {
 	res := &Tree[T]{less: lt, nsp: t.nsp}
 	if len(items) > 0 {
-		ins := res.getNsp()
-		defer res.putNsp(ins)
+		ins := res.getNs()
+		defer res.putNs(ins)
 		for i := range items {
 			res.insertOne(ins, items[i])
 		}
@@ -154,18 +160,14 @@ func (t *Tree[T]) Cmp(reference T) CompareAgainst[T] {
 }
 
 func copyNodes[T any](n *node[T], reverse bool) *node[T] {
-	if n == nil {
-		return nil
-	}
 	res := &node[T]{genH: n.h(), i: n.i}
-	if n.l != nil {
-		res.r = copyNodes(n.l, reverse)
+	for i := range n.c {
+		if n.c[i] != nil {
+			res.c[i] = copyNodes(n.c[i], reverse)
+		}
 	}
-	if n.r != nil {
-		res.l = copyNodes(n.r, reverse)
-	}
-	if !reverse {
-		res.r, res.l = res.l, res.r
+	if reverse {
+		res.c[r], res.c[l] = res.c[l], res.c[r]
 	}
 	return res
 }
@@ -177,9 +179,8 @@ func (t *Tree[T]) Fork() *Tree[T] {
 	if res.gen < maxGen {
 		return res
 	}
-	// If you fork a Tree every nanosecond for a year, you will roll over gen.
-	//  Which means it is feasible for highly contrived workloads.  To preserve
-	// correctness in that case, if gen gets to maxGens then make a copy of everything in the tree.
+	// If you fork a Tree every nanosecond for a year, you will roll over gen and break the copy-on-write invariants.
+	// To preserve correctness in that case, if gen gets to maxGens then make a copy of everything in the tree.
 	// In practice, you are not likely to ever hit this without really trying.
 	res.gen = 0
 	if res.root != nil {
@@ -192,12 +193,15 @@ func (t *Tree[T]) Fork() *Tree[T] {
 // Reverse returns a reversed copy of Tree.  It will not share any resources with Tree.
 func (t *Tree[T]) Reverse() *Tree[T] {
 	ll := t.less
-	return &Tree[T]{
+	res := &Tree[T]{
 		nsp:   t.nsp,
 		less:  func(a, b T) bool { return ll(b, a) },
 		count: t.count,
-		root:  copyNodes(t.root, true),
 	}
+	if t.root != nil {
+		res.root = copyNodes(t.root, true)
+	}
+	return res
 }
 
 // SortBy returns a new empty Tree with an ordering function that falls back to
@@ -224,9 +228,9 @@ func (t *Tree[T]) SortBy(l LessThan[T]) *Tree[T] {
 // SortedClone makes a new Tree using SortBy, then inserts all the data from t into it.
 func (t *Tree[T]) SortedClone(l LessThan[T]) *Tree[T] {
 	res := t.SortBy(l)
-	iter := t.All()
-	ins := &nodeStack[T]{}
-	for iter.Next() {
+	ins := res.getNs()
+	defer res.putNs(ins)
+	for iter := t.All(); iter.Next(); {
 		res.insertOne(ins, iter.Item())
 	}
 	return res
@@ -244,15 +248,16 @@ const unorderable = `Unorderable CompareAgainst passed to Get`
 // the items matching CompareAgainst, use one of the Range, Before, or After instead.
 func (t *Tree[T]) Get(cmp CompareAgainst[T]) (item T, found bool) {
 	h := t.root
+top:
 	for h != nil {
 		switch cmp(h.i) {
 		case Greater:
-			h = h.l
+			h = h.c[l]
 		case Less:
-			h = h.r
+			h = h.c[r]
 		case Equal:
 			item, found = h.i, true
-			return
+			break top
 		default:
 			panic(unorderable)
 		}
@@ -272,13 +277,13 @@ func (t *Tree[T]) Fetch(item T) (v T, found bool) {
 	n := t.root
 	for n != nil {
 		if t.less(item, n.i) {
-			n = n.l
+			n = n.c[l]
 		} else if t.less(n.i, item) {
-			n = n.r
+			n = n.c[r]
 		} else {
 			found = true
 			v = n.i
-			return n.i, true
+			break
 		}
 	}
 	return
@@ -288,7 +293,7 @@ func (t *Tree[T]) Fetch(item T) (v T, found bool) {
 func (t *Tree[T]) Min() (item T, found bool) {
 	if t.root != nil {
 		found = true
-		item = min(t.root).i
+		item = t.root.nextAt(l).i
 	}
 	return
 }
@@ -297,7 +302,7 @@ func (t *Tree[T]) Min() (item T, found bool) {
 func (t *Tree[T]) Max() (item T, found bool) {
 	if t.root != nil {
 		found = true
-		item = max(t.root).i
+		item = t.root.nextAt(r).i
 	}
 	return
 }
@@ -306,8 +311,8 @@ func (t *Tree[T]) Max() (item T, found bool) {
 // t and the new Tree will share nodes where possible.
 func (t *Tree[T]) InsertWith(fill Fill[T]) *Tree[T] {
 	res := t.Fork()
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	thunk := func(v T) {
 		res.insertOne(ins, v)
 	}
@@ -319,8 +324,8 @@ func (t *Tree[T]) InsertWith(fill Fill[T]) *Tree[T] {
 // t and the new Tree will share nodes where possible.
 func (t *Tree[T]) InsertFrom(src Iter[T]) *Tree[T] {
 	res := t.Fork()
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	for src.Next() {
 		res.insertOne(ins, src.Item())
 	}
@@ -331,19 +336,20 @@ func (t *Tree[T]) InsertFrom(src Iter[T]) *Tree[T] {
 // t and the new Tree will share nodes where possible.
 func (t *Tree[T]) Insert(item ...T) *Tree[T] {
 	res := t.Fork()
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	for i := range item {
 		res.insertOne(ins, item[i])
 	}
 	return res
 }
 
-func (into *Tree[T]) deleteOne(ins *nodeStack[T], item T) (deleted T, found bool) {
-	if into.root == nil {
+// deleteOne deletes a single item from the tree.  All of the Delete* functions use it.
+func (t *Tree[T]) deleteOne(ins *nodeStack[T], item T) (deleted T, found bool) {
+	if t.root == nil {
 		return
 	}
-	direction := into.getExact(ins, into.root, item)
+	direction := t.getExact(ins, item)
 	if found = direction == Equal; !found {
 		return
 	}
@@ -352,29 +358,26 @@ func (into *Tree[T]) deleteOne(ins *nodeStack[T], item T) (deleted T, found bool
 	var alt *node[T]
 	for {
 		if at.h() == 1 {
+			// We are at a leaf node.
 			if len(ins.s) > 1 {
-				alt = ins.at(-2)
-				if alt.l == at {
-					alt.l = nil
-				} else {
-					alt.r = nil
-				}
+				// The leaf is not the root. Nil out the appropriate fork of the
+				// parent node and rebalance the tree to maintain AVL invariants.
 				ins.drop()
-				rebalance(ins)
-				into.root = ins.at(0)
+				ins.rebalance()
+				t.root = ins.at(0)
 			} else {
-				into.root = nil
-				into.gen = 0
+				// The leaf node is the root, we are deleting the last node in the tree.
+				// Reset the tree gen while we are at it.
+				t.root = nil
+				t.gen = 0
 			}
-			into.count--
+			t.count--
 			return
-		} else if at.r != nil {
-			at.getLeftmost(ins)
-		} else if at.l != nil {
-			at.getRightmost(ins)
-		} else {
-			panic("Impossible")
 		}
+		at.getNext(ins)
+		// The node to be deleted is an interior node.  Swap its value with one closer
+		// to the leaves and continue.  We will eventually hit a height 1 node and be able
+		// to actually delete something.
 		alt = ins.at(-1)
 		at.i, alt.i = alt.i, at.i
 		at = alt
@@ -386,8 +389,8 @@ func (into *Tree[T]) deleteOne(ins *nodeStack[T], item T) (deleted T, found bool
 // returned tree will share nodes where possible.
 func (t *Tree[T]) Delete(item T) (into *Tree[T], deleted T, found bool) {
 	into = t.Fork()
-	ins := into.getNsp()
-	defer into.putNsp(ins)
+	ins := into.getNs()
+	defer into.putNs(ins)
 	deleted, found = into.deleteOne(ins, item)
 	return
 }
@@ -399,8 +402,8 @@ type Erase[T any] func(func(T) (T, bool))
 
 func (t *Tree[T]) DeleteWith(erase Erase[T]) *Tree[T] {
 	res := t.Fork()
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	thunk := func(v T) (deleted T, found bool) {
 		deleted, found = res.deleteOne(ins, v)
 		return
@@ -413,8 +416,8 @@ func (t *Tree[T]) DeleteWith(erase Erase[T]) *Tree[T] {
 // The original tree is left unchanged.
 func (t *Tree[T]) DeleteFrom(src Iter[T]) *Tree[T] {
 	res := t.Fork()
-	ins := res.getNsp()
-	defer res.putNsp(ins)
+	ins := res.getNs()
+	defer res.putNs(ins)
 	for src.Next() {
 		res.deleteOne(ins, src.Item())
 	}
@@ -424,8 +427,8 @@ func (t *Tree[T]) DeleteFrom(src Iter[T]) *Tree[T] {
 // DeleteItems returns a new Tree that lacks items.  The original tree is left unchanged.
 func (t *Tree[T]) DeleteItems(items ...T) (into *Tree[T], deleted int) {
 	into = t.Fork()
-	ins := into.getNsp()
-	defer into.putNsp(ins)
+	ins := into.getNs()
+	defer into.putNs(ins)
 	var found bool
 	for i := range items {
 		_, found = into.deleteOne(ins, items[i])

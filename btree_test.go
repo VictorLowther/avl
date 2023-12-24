@@ -28,13 +28,13 @@ func (n *node[T]) balanced(t *testing.T) {
 	if n.h() == 0 {
 		panic("Zero height")
 	}
-	if n.h() == 1 && !(n.r == nil && n.l == nil) {
+	if n.h() == 1 && !(n.c[r] == nil && n.c[l] == nil) {
 		panic("Height 1 node has children")
 	}
-	if n.h() > 1 && n.r == nil && n.l == nil {
+	if n.h() > 1 && n.c[r] == nil && n.c[l] == nil {
 		panic("Interior node has no children")
 	}
-	lh, rh := n.l.height(), n.r.height()
+	lh, rh := n.c[l].height(), n.c[r].height()
 	if lh >= n.h() || rh >= n.h() {
 		panic("Child height greater than ours")
 	}
@@ -51,11 +51,11 @@ func (n *node[T]) balanced(t *testing.T) {
 	} else if b < -1 {
 		panic("Too heavy to the left!")
 	}
-	if n.l != nil {
-		n.l.balanced(t)
+	if n.c[l] != nil {
+		n.c[l].balanced(t)
 	}
-	if n.r != nil {
-		n.r.balanced(t)
+	if n.c[r] != nil {
+		n.c[r].balanced(t)
 	}
 }
 
@@ -66,57 +66,57 @@ func TestRotate(t *testing.T) {
 	if tree.root.i != 1 {
 		t.Fatalf("Tree.root.i %d, not 1", tree.root.i)
 	}
-	if tree.root.l.i != 0 {
-		t.Fatalf("Tree root.l.i %d, not 0", tree.root.l.i)
+	if tree.root.c[l].i != 0 {
+		t.Fatalf("Tree root.l.i %d, not 0", tree.root.c[l].i)
 	}
-	if tree.root.r.i != 3 {
-		t.Fatalf("Tree.root.r.i %d, not 3", tree.root.r.i)
+	if tree.root.c[r].i != 3 {
+		t.Fatalf("Tree.root.r.i %d, not 3", tree.root.c[r].i)
 	}
-	if tree.root.r.l.i != 2 {
-		t.Fatalf("Tree.root.r.l.i %d, not 2", tree.root.r.l.i)
+	if tree.root.c[r].c[l].i != 2 {
+		t.Fatalf("Tree.root.r.l.i %d, not 2", tree.root.c[r].c[l].i)
 	}
-	if tree.root.r.r.i != 4 {
-		t.Fatalf("Tree.root.r.r.i %d, not 4", tree.root.r.r.i)
+	if tree.root.c[r].c[r].i != 4 {
+		t.Fatalf("Tree.root.r.r.i %d, not 4", tree.root.c[r].c[r].i)
 	}
 	t.Logf("Tree populated correctly")
 	tree.root.balanced(t)
-	tree.root = tree.root.rotateLeft()
-	tree.root.l.setHeight()
+	tree.root = tree.root.rotate(l, r)
+	tree.root.c[l].setHeight()
 	tree.root.setHeight()
 	if tree.root.i != 3 {
 		t.Fatalf("Tree.root.i %d, not 3", tree.root.i)
 	}
-	if tree.root.l.i != 1 {
-		t.Fatalf("Tree root.l.i %d, not 1", tree.root.l.i)
+	if tree.root.c[l].i != 1 {
+		t.Fatalf("Tree root.l.i %d, not 1", tree.root.c[l].i)
 	}
-	if tree.root.l.l.i != 0 {
-		t.Fatalf("Tree.root.l.l.i %d, not 0", tree.root.l.l.i)
+	if tree.root.c[l].c[l].i != 0 {
+		t.Fatalf("Tree.root.l.l.i %d, not 0", tree.root.c[l].c[l].i)
 	}
-	if tree.root.l.r.i != 2 {
-		t.Fatalf("Tree.root.l.r.i %d, not 2", tree.root.l.r.i)
+	if tree.root.c[l].c[r].i != 2 {
+		t.Fatalf("Tree.root.l.r.i %d, not 2", tree.root.c[l].c[r].i)
 	}
-	if tree.root.r.i != 4 {
-		t.Fatalf("Tree.root.r.i %d, not 4", tree.root.r.i)
+	if tree.root.c[r].i != 4 {
+		t.Fatalf("Tree.root.r.i %d, not 4", tree.root.c[r].i)
 	}
 	t.Logf("Tree rotated left correctly")
 	tree.root.balanced(t)
-	tree.root = tree.root.rotateRight()
-	tree.root.r.setHeight()
+	tree.root = tree.root.rotate(r, l)
+	tree.root.c[r].setHeight()
 	tree.root.setHeight()
 	if tree.root.i != 1 {
 		t.Fatalf("Tree.root.i %d, not 1", tree.root.i)
 	}
-	if tree.root.l.i != 0 {
-		t.Fatalf("Tree root.l.i %d, not 0", tree.root.l.i)
+	if tree.root.c[l].i != 0 {
+		t.Fatalf("Tree root.l.i %d, not 0", tree.root.c[l].i)
 	}
-	if tree.root.r.i != 3 {
-		t.Fatalf("Tree.root.r.i %d, not 3", tree.root.r.i)
+	if tree.root.c[r].i != 3 {
+		t.Fatalf("Tree.root.r.i %d, not 3", tree.root.c[r].i)
 	}
-	if tree.root.r.l.i != 2 {
-		t.Fatalf("Tree.root.r.l.i %d, not 2", tree.root.r.l.i)
+	if tree.root.c[r].c[l].i != 2 {
+		t.Fatalf("Tree.root.r.l.i %d, not 2", tree.root.c[r].c[l].i)
 	}
-	if tree.root.r.r.i != 4 {
-		t.Fatalf("Tree.root.r.r.i %d, not 4", tree.root.r.r.i)
+	if tree.root.c[r].c[r].i != 4 {
+		t.Fatalf("Tree.root.r.r.i %d, not 4", tree.root.c[r].c[r].i)
 	}
 	tree.root.balanced(t)
 	t.Logf("Tree rotated right correctly")
@@ -628,8 +628,7 @@ func BenchmarkIntIterAll(b *testing.B) {
 	b.StartTimer()
 	i := 0
 	for i < b.N {
-		all := tree.All()
-		for all.Next() && i < b.N {
+		for all := tree.All(); all.Next() && i < b.N; {
 			if i%(1<<16) != all.Item() {
 				b.Fatal(i, " != ", all.Item())
 			}
@@ -777,8 +776,7 @@ func TestCopyOnWriteRace(t *testing.T) {
 				return
 			default:
 				i := 0
-				iter := tree1.All()
-				for iter.Next() {
+				for iter := tree1.All(); iter.Next(); {
 					item := iter.Item()
 					if item.i != i || i >= 200 || item.mark != 1 {
 						t.Errorf("Tree 1 has bleed over from %d at %d", item.mark, item.i)
@@ -805,9 +803,9 @@ func TestCopyOnWriteRace(t *testing.T) {
 			case <-ctx.Done():
 				return
 			default:
-				iter := tree2.All()
+
 				i := 0
-				for iter.Next() {
+				for iter := tree2.All(); iter.Next(); {
 					item := iter.Item()
 					if item.i != i || item.i >= 300 || item.mark == 3 {
 						t.Errorf("Tree 2 has bleed over from %d at %d", item.mark, item.i)
@@ -842,9 +840,8 @@ func TestCopyOnWriteRace(t *testing.T) {
 			case <-ctx.Done():
 				return
 			default:
-				iter := tree3.All()
 				i := -100
-				for iter.Next() {
+				for iter := tree3.All(); iter.Next(); {
 					item := iter.Item()
 					if item.i != i || item.i >= 200 || item.mark == 2 {
 						t.Errorf("Tree 3 has bleed over from %d at %d", item.mark, item.i)

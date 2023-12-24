@@ -16,10 +16,10 @@ func (t *Tree[T]) getHeight(h *node[T], item CompareAgainst[T]) (T, int) {
 	}
 	switch item(h.i) {
 	case -1:
-		result, depth := t.getHeight(h.l, item)
+		result, depth := t.getHeight(h.c[l], item)
 		return result, depth + 1
 	case 1:
-		result, depth := t.getHeight(h.l, item)
+		result, depth := t.getHeight(h.c[l], item)
 		return result, depth + 1
 	default:
 		return h.i, 0
@@ -39,11 +39,11 @@ func heightStats[T any](h *node[T], d int, av *AvgVar) {
 		return
 	}
 	av.Add(float64(d))
-	if h.l != nil {
-		heightStats(h.l, d+1, av)
+	if h.c[l] != nil {
+		heightStats(h.c[l], d+1, av)
 	}
-	if h.r != nil {
-		heightStats(h.r, d+1, av)
+	if h.c[r] != nil {
+		heightStats(h.c[r], d+1, av)
 	}
 }
 

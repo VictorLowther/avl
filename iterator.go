@@ -44,24 +44,6 @@ func Ne[T any](c CompareAgainst[T]) Test[T] {
 	return func(idx T) bool { return c(idx) != Equal }
 }
 
-// cmpIter holds state needed to iterate over a binary Tree.
-// You must not modify the Tree while iterating over it, lest you
-// get undefined results and/or panics.
-type cmpIter[T any] struct {
-	t           *Tree[T]
-	stack       []*node[T]
-	workingNode *node[T]
-	start, stop Test[T]
-	ascending   bool
-}
-
-func (i *cmpIter[T]) clearStack() {
-	for k := range i.stack {
-		i.stack[k] = nil
-	}
-	i.stack = i.stack[:0]
-}
-
 // Iter is used to iterate over a binary tree.
 type Iter[T any] interface {
 	// Release releases all state that the Iterator holds.
@@ -79,6 +61,23 @@ type Iter[T any] interface {
 	// assuming the previous call to Next or Prev returned true.  It will panic
 	// otherwise.
 	Item() T
+}
+
+// cmpIter holds state needed to iterate over a binary Tree using specified start
+// and stop conditions.
+type cmpIter[T any] struct {
+	t           *Tree[T]
+	stack       []*node[T]
+	workingNode *node[T]
+	start, stop Test[T]
+	ascending   bool
+}
+
+func (i *cmpIter[T]) clearStack() {
+	for k := range i.stack {
+		i.stack[k] = nil
+	}
+	i.stack = i.stack[:0]
 }
 
 // Release releases the state the cmpIter holds.
@@ -146,13 +145,13 @@ func (i *cmpIter[T]) pickNextNode(current, next, bound *node[T], boundCheck Test
 
 func (i *cmpIter[T]) min(n *node[T]) {
 	for n != nil {
-		n = i.pickNextNode(n, n.l, n.r, i.start)
+		n = i.pickNextNode(n, n.c[l], n.c[r], i.start)
 	}
 }
 
 func (i *cmpIter[T]) max(n *node[T]) {
 	for n != nil {
-		n = i.pickNextNode(n, n.r, n.l, i.stop)
+		n = i.pickNextNode(n, n.c[r], n.c[l], i.stop)
 	}
 }
 
@@ -212,13 +211,13 @@ func (i *cmpIter[T]) Next() bool {
 	if !i.ascending && !i.changeDirection() {
 		return false
 	}
-	if i.workingNode.r == nil {
+	if i.workingNode.c[r] == nil {
 		i.pop()
 	} else {
-		i.workingNode = i.workingNode.r
+		i.workingNode = i.workingNode.c[r]
 		i.swapHead()
-		if i.workingNode.l != nil {
-			i.min(i.workingNode.l)
+		if i.workingNode.c[l] != nil {
+			i.min(i.workingNode.c[l])
 			i.workingNode = i.stackHead()
 		}
 	}
@@ -241,13 +240,13 @@ func (i *cmpIter[T]) Prev() bool {
 	if i.ascending && !i.changeDirection() {
 		return false
 	}
-	if i.workingNode.l == nil {
+	if i.workingNode.c[l] == nil {
 		i.pop()
 	} else {
-		i.workingNode = i.workingNode.l
+		i.workingNode = i.workingNode.c[l]
 		i.swapHead()
-		if i.workingNode.r != nil {
-			i.max(i.workingNode.r)
+		if i.workingNode.c[r] != nil {
+			i.max(i.workingNode.c[r])
 			i.workingNode = i.stackHead()
 		}
 	}
@@ -339,96 +338,98 @@ func (t *Tree[T]) Before(stop, iterator Test[T]) {
 // Walk will call cmpIter once for each item in the Tree in ascending order.
 // Walk will return early if iterator returns false.
 func (t *Tree[T]) Walk(iterator Test[T]) {
-	i := t.All()
-	for i.Next() {
+	for i := t.All(); i.Next(); {
 		if !iterator(i.Item()) {
 			i.Release()
 		}
 	}
 }
 
+// rangeIter is use to iterate over a tree, skipping the first offset nodes and stopping after
+// returning limit nodes.  If limit is -1, the rest of the nodes in the Tree will return.
 type rangeIter[T any] struct {
 	t             *Tree[T]
 	stack         []*node[T]
 	offset, limit int
 }
 
-func (r *rangeIter[T]) workingNode() *node[T] {
-	offset := len(r.stack) - 1
+func (ri *rangeIter[T]) workingNode() *node[T] {
+	offset := len(ri.stack) - 1
 	if offset == -1 {
 		return nil
 	}
-	return r.stack[offset]
+	return ri.stack[offset]
 }
 
-func (r *rangeIter[T]) pop() *node[T] {
-	offset := len(r.stack) - 1
+func (ri *rangeIter[T]) pop() *node[T] {
+	offset := len(ri.stack) - 1
 	if offset == -1 {
 		return nil
 	}
-	res := r.stack[offset]
-	r.stack[offset] = nil
-	r.stack = r.stack[:offset]
+	res := ri.stack[offset]
+	ri.stack[offset] = nil
+	ri.stack = ri.stack[:offset]
 	return res
 }
 
-func (r *rangeIter[T]) Release() {
-	r.stack = nil
-	r.t = nil
+func (ri *rangeIter[T]) Release() {
+	ri.stack = nil
+	ri.t = nil
 }
 
-func (r *rangeIter[T]) Item() T {
-	n := r.workingNode()
+func (ri *rangeIter[T]) Item() T {
+	n := ri.workingNode()
 	if n == nil {
 		panic("Iterator not initialized")
 	}
 	return n.i
 }
 
-func (r *rangeIter[T]) Prev() bool {
+// Prev is not defined for a rangeIter.
+func (ri *rangeIter[T]) Prev() bool {
 	return false
 }
 
-func (r *rangeIter[T]) min(n *node[T]) {
+func (ri *rangeIter[T]) min(n *node[T]) {
 	for {
-		r.stack = append(r.stack, n)
-		if n.l == nil {
+		ri.stack = append(ri.stack, n)
+		if n.c[l] == nil {
 			return
 		}
-		n = n.l
+		n = n.c[l]
 	}
 }
 
-func (r *rangeIter[T]) next() {
-	if r.offset > 0 {
-		r.offset--
+func (ri *rangeIter[T]) next() {
+	if ri.offset > 0 {
+		ri.offset--
 	}
-	n := r.pop()
-	if n != nil && n.r != nil {
-		r.min(n.r)
+	n := ri.pop()
+	if n != nil && n.c[r] != nil {
+		ri.min(n.c[r])
 	}
 }
 
-func (r *rangeIter[T]) Next() bool {
-	if len(r.stack) == 0 {
-		if r.t == nil {
+func (ri *rangeIter[T]) Next() bool {
+	if len(ri.stack) == 0 {
+		if ri.t == nil {
 			return false
 		}
-		if r.t.root != nil {
-			r.min(r.t.root)
+		if ri.t.root != nil {
+			ri.min(ri.t.root)
 		}
-		for r.offset > 0 && len(r.stack) > 0 {
-			r.next()
+		for ri.offset > 0 && len(ri.stack) > 0 {
+			ri.next()
 		}
 	} else {
-		r.next()
+		ri.next()
 	}
-	if r.limit == 0 || r.workingNode() == nil {
-		r.Release()
+	if ri.limit == 0 || ri.workingNode() == nil {
+		ri.Release()
 		return false
 	}
-	if r.limit > 0 {
-		r.limit--
+	if ri.limit > 0 {
+		ri.limit--
 	}
 	return true
 }
