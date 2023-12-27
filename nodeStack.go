@@ -1,4 +1,4 @@
-package ibtree
+package avl
 
 // nodeStack keeps track of nodes that are modified during insert and delete operations.
 // The node at position 0 is the root of the tree, and the node at position len(n.s)-1 is

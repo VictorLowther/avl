@@ -1,4 +1,4 @@
-package ibtree
+package avl
 
 import (
 	"context"

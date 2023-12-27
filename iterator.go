@@ -1,4 +1,4 @@
-package ibtree
+package avl
 
 // Test is a function signature that is used for iterating through
 // a Tree along with the signature that Range, Before, and After

@@ -1,3 +1,3 @@
-module github.com/VictorLowther/ibtree
+module github.com/VictorLowther/avl
 
 go 1.18

@@ -1,32 +1,31 @@
-# ibtree
+# avl
 
-ibtree is an implementation of generic immutable balanced binary trees in Go. 
-This packages provides generic immutable AVL trees. 
+avl is an implementation of generic immutable AVL trees in Go.  
 
 ## Why
 
-Mutable btrees are all well and good, but sometimes you need a btree that can be updated
+Mutable binary search trees are all well and good, but sometimes you need a tree that can be updated
 and accessed at the same time in multiple different goroutines.  Sure, you could invent
 a complicated locking scheme using ever more finegrained and deadlock prone locking schemes.
 There are libraries out there that provide that.  This is not one of them.
 
-Instead, this library provides immutable btrees.  Any operation that would mutate the tree will
+Instead, this library provides immutable AVL trees.  Any operation that would mutate the tree will
 instead make copies of any nodes that would be changed and return a new tree.  The new tree and
 the old tree will share unchanged nodes.  This library also provides bulk insert and delete operations
 that minimize the amount of node copying that happens under the hood.
 
 ## Installation
 
-go get https://github.com/VictorLowther/ibtree
+go get https://github.com/VictorLowther/avl
 
 ## Example
 
     package main
-    import github.com/VictorLowther/ibtree
+    import github.com/VictorLowther/avl
     import fmt
 
     func main() {
-        tree := ibtree.New[int](func(a,b int) {return a < b})
+        tree := avl.New[int](func(a,b int) {return a < b})
         tree = tree.Insert(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
         tree = tree.Reverse()
         iter := tree.Iterate(nil, nil)
@@ -42,7 +41,7 @@ On a Macbook Pro M1 Max:
     % go test -bench .
     goos: darwin
     goarch: arm64
-    pkg: github.com/VictorLowther/ibtree
+    pkg: github.com/VictorLowther/avl
     BenchmarkInsertIntSeqNocow-10           	 6304920	       214.8 ns/op	      32 B/op	       1 allocs/op
     BenchmarkInsertIntSeqCow-10             	 7593422	       176.1 ns/op	      32 B/op	       1 allocs/op
     BenchmarkInsertIntSeqReverseNocow-10    	 6726402	       225.3 ns/op	      32 B/op	       1 allocs/op
